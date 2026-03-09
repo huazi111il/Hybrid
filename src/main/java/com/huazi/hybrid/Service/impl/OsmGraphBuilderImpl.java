@@ -31,12 +31,9 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
     @Autowired
     private Graph graph;
 
-    @Value("${osm.file.path:data/city.osm.pbf}") // 默认路径，可在 application.properties 中修改
+    @Value("${osm.file.path:data/city.osm.pbf}")
     private String osmFilePath;
 
-    /**
-     * 应用启动时自动加载 OSM 数据
-     */
     @PostConstruct
     public void autoLoad() {
         System.out.println("autoLoad executed");
@@ -124,9 +121,12 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
                 }
             }
         }
+
+        // 5. 构建地铁网络（关键！之前缺少这一行）
+        buildSubwayNetwork();
     }
 
-    // ---------- 以下为辅助方法，与之前相同 ----------
+    // ---------- 以下为辅助方法 ----------
     private boolean isRoadway(Map<String, String> tags) {
         String highway = tags.get("highway");
         if (highway == null) return false;
@@ -148,25 +148,25 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
         switch (highway) {
             case "motorway":
             case "motorway_link":
-                return 27.8;
+                return 22.2; // 80 km/h
             case "trunk":
             case "trunk_link":
-                return 25.0;
+                return 19.4; // 70 km/h
             case "primary":
             case "primary_link":
-                return 22.2;
+                return 16.7; // 60 km/h
             case "secondary":
             case "secondary_link":
-                return 19.4;
+                return 13.9; // 50 km/h
             case "tertiary":
             case "tertiary_link":
-                return 16.7;
+                return 11.1; // 40 km/h
             case "residential":
-                return 11.1;
+                return 8.3;  // 30 km/h
             case "service":
-                return 8.3;
+                return 5.6;  // 20 km/h
             default:
-                return 13.9;
+                return 11.1; // 40 km/h 默认
         }
     }
 
@@ -179,5 +179,78 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
                         Math.sin(dLon / 2) * Math.sin(dLon / 2);
         double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         return R * c;
+    }
+
+    /**
+     * 构建地铁网络（包含站点、线路边和换乘边）
+     */
+    private void buildSubwayNetwork() {
+        System.out.println("开始构建地铁网络...");
+        long offset = 10000000000L; // 10亿偏移
+
+        // 定义站点（ID, 名称, 经度, 纬度）
+        List<SubwayStation> stations = Arrays.asList(
+                new SubwayStation(1 + offset, "海口站", 110.316, 20.030),
+                new SubwayStation(2 + offset, "龙华站", 110.340, 20.030),
+                new SubwayStation(3 + offset, "国兴站", 110.365, 20.015),
+                new SubwayStation(4 + offset, "府城站", 110.380, 20.000)
+        );
+
+        // 先添加地铁节点到图
+        for (SubwayStation s : stations) {
+            Node node = new Node(s.id, s.lat, s.lon);
+            graph.addNode(node);
+        }
+
+        // 创建地铁线路边（速度设为 15 m/s，约 54 km/h，比开车稍慢但合理）
+        double subwaySpeed = 15.0; // 调整至合理值
+        List<Long> lineNodeIds = Arrays.asList(
+                stations.get(0).id, stations.get(1).id, stations.get(2).id, stations.get(3).id
+        );
+        for (int i = 0; i < lineNodeIds.size() - 1; i++) {
+            long fromId = lineNodeIds.get(i);
+            long toId = lineNodeIds.get(i + 1);
+            Node fromNode = graph.getNode(fromId);
+            Node toNode = graph.getNode(toId);
+            double distance = haversine(fromNode.getLon(), fromNode.getLat(), toNode.getLon(), toNode.getLat());
+            double time = distance / subwaySpeed;
+            Edge edge = new Edge(fromId, toId, distance, time, "subway", "subway", false);
+            graph.addEdge(edge);
+            Edge reverse = new Edge(toId, fromId, distance, time, "subway", "subway", false);
+            graph.addEdge(reverse);
+            System.out.printf("添加地铁边: %d <-> %d, 距离 %.0f m, 时间 %.1f s%n", fromId, toId, distance, time);
+        }
+
+        // 创建换乘边：每个地铁站连接到附近800米内的道路节点（增大距离以增加连通可能）
+        double walkSpeed = 1.4; // 步行速度 m/s
+        double maxWalkDistance = 800; // 米
+        int transferCount = 0;
+        for (SubwayStation station : stations) {
+            for (Node roadNode : graph.getNodes().values()) {
+                if (roadNode.getId() > offset) continue; // 跳过地铁节点
+                double dist = haversine(station.lon, station.lat, roadNode.getLon(), roadNode.getLat());
+                if (dist <= maxWalkDistance) {
+                    double walkTime = dist / walkSpeed;
+                    Edge toSubway = new Edge(roadNode.getId(), station.id, dist, walkTime, "walk", "walk", false);
+                    graph.addEdge(toSubway);
+                    Edge fromSubway = new Edge(station.id, roadNode.getId(), dist, walkTime, "walk", "walk", false);
+                    graph.addEdge(fromSubway);
+                    transferCount++;
+                }
+            }
+        }
+        System.out.println("换乘边添加数量: " + transferCount);
+        System.out.println("地铁网络构建完成，当前总节点数: " + graph.getNodes().size());
+        System.out.println("总边数: " + graph.getOutgoingEdgesCount());
+    }
+
+    // 辅助内部类
+    private static class SubwayStation {
+        long id;
+        String name;
+        double lon, lat;
+        SubwayStation(long id, String name, double lon, double lat) {
+            this.id = id; this.name = name; this.lon = lon; this.lat = lat;
+        }
     }
 }

@@ -2,7 +2,7 @@ package com.huazi.hybrid.Pojo.GraphPojo;
 
 import lombok.Getter;
 import org.springframework.stereotype.Component;
-import jakarta.annotation.PostConstruct; // ✅ 正确
+import jakarta.annotation.PostConstruct;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -19,25 +19,23 @@ public class Graph {
     // 邻接表：起始节点 ID -> 从该节点出发的所有边
     private final Map<Long, List<Edge>> adjacencyList = new ConcurrentHashMap<>();
 
+    // 所有出现在边中的节点ID（即道路节点）
+    private final Set<Long> roadNodeIds = ConcurrentHashMap.newKeySet();
+
     /**
      * 添加节点
      */
-    /**
-     * 获取图中边的总数（所有邻接表边数之和）
-     */
-    public long getOutgoingEdgesCount() {
-        return adjacencyList.values().stream().mapToLong(List::size).sum();
-    }
-
     public void addNode(Node node) {
         nodes.put(node.getId(), node);
     }
 
     /**
-     * 添加边（自动维护邻接表）
+     * 添加边，同时记录边的两个端点为道路节点
      */
     public void addEdge(Edge edge) {
         adjacencyList.computeIfAbsent(edge.getFromNodeId(), k -> new ArrayList<>()).add(edge);
+        roadNodeIds.add(edge.getFromNodeId());
+        roadNodeIds.add(edge.getToNodeId());
     }
 
     /**
@@ -55,11 +53,26 @@ public class Graph {
     }
 
     /**
+     * 获取所有道路节点ID（至少出现在一条边中的节点）
+     */
+    public Set<Long> getRoadNodeIds() {
+        return roadNodeIds;
+    }
+
+    /**
+     * 获取图中边的总数（所有邻接表边数之和）
+     */
+    public long getOutgoingEdgesCount() {
+        return adjacencyList.values().stream().mapToLong(List::size).sum();
+    }
+
+    /**
      * 清空图（重新加载数据前调用）
      */
     public void clear() {
         nodes.clear();
         adjacencyList.clear();
+        roadNodeIds.clear();
     }
 
     /**

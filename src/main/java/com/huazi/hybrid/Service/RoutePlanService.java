@@ -14,42 +14,56 @@ public class RoutePlanService {
     @Autowired
     private Graph graph;
 
-    // 最大速度用于启发式函数 (22.2 m/s ≈ 80 km/h)
-    private static final double MAX_SPEED = 22.2;
+    private static final double MAX_SPEED = 22.2; // 最大速度用于启发式函数 (22.2 m/s ≈ 80 km/h)
+
+    // 地铁节点偏移量（需与构建时一致）
+    private static final long SUBWAY_OFFSET = 10000000000L;
+
+    /**
+     * 路径分段信息
+     */
+    public static class PathSegment {
+        public String mode;
+        public List<Long> nodeIds;
+        public double distance;
+        public double time;
+        public double avgCongestion;
+
+        public PathSegment(String mode, List<Long> nodeIds, double distance, double time, double avgCongestion) {
+            this.mode = mode;
+            this.nodeIds = nodeIds;
+            this.distance = distance;
+            this.time = time;
+            this.avgCongestion = avgCongestion;
+        }
+    }
 
     /**
      * 路径规划结果
      */
     public static class PathResult {
-        public List<Long> nodeIds;      // 经过的节点ID（包括起点终点）
-        public double totalTime;         // 总时间（秒）
-        public PathResult(List<Long> nodeIds, double totalTime) {
+        public List<Long> nodeIds;
+        public double totalTime;
+        public List<PathSegment> segments;
+
+        public PathResult(List<Long> nodeIds, double totalTime, List<PathSegment> segments) {
             this.nodeIds = nodeIds;
             this.totalTime = totalTime;
+            this.segments = segments;
         }
     }
 
-    /**
-     * A* 算法
-     * @param startNodeId 起点节点ID
-     * @param endNodeId   终点节点ID
-     * @return 路径结果，若无路径返回null
-     */
     public PathResult aStar(long startNodeId, long endNodeId) {
         System.out.println("=== A* start ===");
         System.out.println("startNodeId: " + startNodeId + ", endNodeId: " + endNodeId);
 
-        // 检查起点/终点节点是否存在
         Node startNode = graph.getNode(startNodeId);
         Node endNode = graph.getNode(endNodeId);
         if (startNode == null || endNode == null) {
             System.out.println("起点或终点节点不存在");
             return null;
         }
-        System.out.println("起点坐标: " + startNode.getLon() + "," + startNode.getLat());
-        System.out.println("终点坐标: " + endNode.getLon() + "," + endNode.getLat());
 
-        // 优先队列等初始化
         PriorityQueue<NodeRecord> open = new PriorityQueue<>(Comparator.comparingDouble(a -> a.f));
         Map<Long, NodeRecord> allNodes = new HashMap<>();
 
@@ -71,12 +85,9 @@ public class RoutePlanService {
             }
 
             List<Edge> edges = graph.getOutgoingEdges(current.nodeId);
-            if (edges.isEmpty()) {
-                // System.out.println("节点 " + current.nodeId + " 无出边");
-            }
             for (Edge edge : edges) {
                 long neighborId = edge.getToNodeId();
-                double tentativeG = current.g + edge.getTime();
+                double tentativeG = current.g + edge.getRealTime(); // 使用实时时间
 
                 NodeRecord neighborRecord = allNodes.get(neighborId);
                 if (neighborRecord == null) {
@@ -98,9 +109,6 @@ public class RoutePlanService {
         return null;
     }
 
-    /**
-     * 启发式函数：直线距离 / 最大速度
-     */
     private double heuristic(Node from, Node to) {
         return haversine(from.getLon(), from.getLat(), to.getLon(), to.getLat()) / MAX_SPEED;
     }
@@ -116,9 +124,6 @@ public class RoutePlanService {
         return R * c;
     }
 
-    /**
-     * 从记录重建路径
-     */
     private PathResult buildPathResult(Map<Long, NodeRecord> records, NodeRecord goal) {
         LinkedList<Long> path = new LinkedList<>();
         NodeRecord current = goal;
@@ -127,18 +132,83 @@ public class RoutePlanService {
             if (current.parent == null) break;
             current = records.get(current.parent);
         }
-        return new PathResult(path, goal.g);
+
+        List<PathSegment> segments = new ArrayList<>();
+        if (path.size() >= 2) {
+            String currentMode = null;
+            List<Long> currentNodes = new ArrayList<>();
+            double currentDistance = 0;
+            double currentTime = 0;
+            double currentCongestionSum = 0;
+            int currentEdgeCount = 0;
+
+            currentNodes.add(path.get(0));
+
+            for (int i = 0; i < path.size() - 1; i++) {
+                long fromId = path.get(i);
+                long toId = path.get(i + 1);
+                Edge edge = findEdge(fromId, toId);
+                if (edge == null) continue;
+
+                String mode = mapMode(edge.getRoadType());
+
+                if (currentMode == null) {
+                    currentMode = mode;
+                }
+
+                if (!mode.equals(currentMode)) {
+                    double avgCong = currentEdgeCount > 0 ? currentCongestionSum / currentEdgeCount : 1.0;
+                    segments.add(new PathSegment(currentMode, new ArrayList<>(currentNodes),
+                            currentDistance, currentTime, avgCong));
+                    // 开始新段
+                    currentNodes.clear();
+                    currentNodes.add(fromId);
+                    currentDistance = 0;
+                    currentTime = 0;
+                    currentCongestionSum = 0;
+                    currentEdgeCount = 0;
+                    currentMode = mode;
+                }
+
+                currentNodes.add(toId);
+                currentDistance += edge.getDistance();
+                currentTime += edge.getRealTime();
+                currentCongestionSum += edge.getCongestionFactor();
+                currentEdgeCount++;
+            }
+
+            // 最后一段
+            if (currentMode != null) {
+                double avgCong = currentEdgeCount > 0 ? currentCongestionSum / currentEdgeCount : 1.0;
+                segments.add(new PathSegment(currentMode, new ArrayList<>(currentNodes),
+                        currentDistance, currentTime, avgCong));
+            }
+        }
+
+        return new PathResult(path, goal.g, segments);
     }
 
-    /**
-     * A* 内部记录类
-     */
+    private String mapMode(String roadType) {
+        if (roadType == null) return "drive";
+        if (roadType.equals("subway")) return "subway";
+        if (roadType.equals("walk")) return "walk";
+        return "drive";
+    }
+
+    private Edge findEdge(long fromId, long toId) {
+        List<Edge> edges = graph.getOutgoingEdges(fromId);
+        for (Edge e : edges) {
+            if (e.getToNodeId() == toId) return e;
+        }
+        return null;
+    }
+
     private static class NodeRecord {
         long nodeId;
-        double g;      // 从起点到当前节点的实际代价
-        double h;      // 启发值
-        double f;      // 估计总代价
-        Long parent;   // 父节点ID
+        double g;
+        double h;
+        double f;
+        Long parent;
 
         NodeRecord(long nodeId, double g, double f, Long parent) {
             this.nodeId = nodeId;

@@ -1,4 +1,4 @@
-package Service;
+package com.huazi.hybrid.Service;
 
 import org.springframework.stereotype.Service;
 

@@ -1,4 +1,4 @@
-package Pojo;
+package com.huazi.hybrid.Pojo;
 
 import lombok.Data;
 

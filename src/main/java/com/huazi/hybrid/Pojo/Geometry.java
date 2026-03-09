@@ -1,4 +1,4 @@
-package Pojo;
+package com.huazi.hybrid.Pojo;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;

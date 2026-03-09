@@ -14,14 +14,8 @@ public class RoutePlanService {
     @Autowired
     private Graph graph;
 
-    private static final double MAX_SPEED = 22.2; // 最大速度用于启发式函数 (22.2 m/s ≈ 80 km/h)
+    private static final double MAX_SPEED = 22.2;
 
-    // 地铁节点偏移量（需与构建时一致）
-    private static final long SUBWAY_OFFSET = 10000000000L;
-
-    /**
-     * 路径分段信息
-     */
     public static class PathSegment {
         public String mode;
         public List<Long> nodeIds;
@@ -38,9 +32,6 @@ public class RoutePlanService {
         }
     }
 
-    /**
-     * 路径规划结果
-     */
     public static class PathResult {
         public List<Long> nodeIds;
         public double totalTime;
@@ -87,7 +78,7 @@ public class RoutePlanService {
             List<Edge> edges = graph.getOutgoingEdges(current.nodeId);
             for (Edge edge : edges) {
                 long neighborId = edge.getToNodeId();
-                double tentativeG = current.g + edge.getRealTime(); // 使用实时时间
+                double tentativeG = current.g + edge.getRealTime();
 
                 NodeRecord neighborRecord = allNodes.get(neighborId);
                 if (neighborRecord == null) {

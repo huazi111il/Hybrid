@@ -26,7 +26,6 @@ public class RouteController {
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> planRoute(@RequestBody RouteRequest request) {
-
         long startNodeId = locationService.findNearestRoadNode(request.start.lng, request.start.lat, true);
         long endNodeId = locationService.findNearestRoadNode(request.end.lng, request.end.lat, false);
 
@@ -42,7 +41,6 @@ public class RouteController {
                 })
                 .collect(Collectors.toList());
 
-        // 构建分段信息
         List<Map<String, Object>> segmentsJson = new ArrayList<>();
         if (result.segments != null) {
             for (RoutePlanService.PathSegment seg : result.segments) {

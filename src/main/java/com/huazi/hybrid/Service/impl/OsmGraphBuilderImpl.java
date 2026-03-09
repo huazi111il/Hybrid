@@ -53,19 +53,14 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
 
     @Override
     public void buildGraph(String filePath) throws IOException {
-        // 清空旧数据
         graph.clear();
 
-        // 1. 创建 OSM 迭代器
         InputStream input = Files.newInputStream(Paths.get(filePath));
         OsmIterator iterator = new PbfIterator(input, true);
 
-        // 临时存储：节点ID -> Node
         Map<Long, Node> tempNodes = new HashMap<>();
-        // 临时存储：Way 列表
         List<Way> tempWays = new ArrayList<>();
 
-        // 2. 第一遍扫描：收集所有节点和符合条件的道路
         iterator.forEachRemaining(container -> {
             if (container.getType() == EntityType.Node) {
                 OsmNode osmNode = (OsmNode) container.getEntity();
@@ -74,8 +69,6 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
             } else if (container.getType() == EntityType.Way) {
                 OsmWay osmWay = (OsmWay) container.getEntity();
                 Map<String, String> tags = OsmModelUtil.getTagsAsMap(osmWay);
-
-                // 只保留机动车道
                 if (isRoadway(tags)) {
                     List<Long> nodeIds = new ArrayList<>();
                     for (int i = 0; i < osmWay.getNumberOfNodes(); i++) {
@@ -87,10 +80,8 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
         });
         input.close();
 
-        // 3. 将所有节点加入 Graph
         tempNodes.values().forEach(graph::addNode);
 
-        // 4. 第二遍扫描：处理每条 Way，拆分成边
         for (Way way : tempWays) {
             List<Long> nodeIds = way.getNodeIds();
             Map<String, String> tags = way.getTags();
@@ -122,11 +113,9 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
             }
         }
 
-        // 5. 构建地铁网络（关键！之前缺少这一行）
         buildSubwayNetwork();
     }
 
-    // ---------- 以下为辅助方法 ----------
     private boolean isRoadway(Map<String, String> tags) {
         String highway = tags.get("highway");
         if (highway == null) return false;
@@ -148,25 +137,25 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
         switch (highway) {
             case "motorway":
             case "motorway_link":
-                return 22.2; // 80 km/h
+                return 22.2;
             case "trunk":
             case "trunk_link":
-                return 19.4; // 70 km/h
+                return 19.4;
             case "primary":
             case "primary_link":
-                return 16.7; // 60 km/h
+                return 16.7;
             case "secondary":
             case "secondary_link":
-                return 13.9; // 50 km/h
+                return 13.9;
             case "tertiary":
             case "tertiary_link":
-                return 11.1; // 40 km/h
+                return 11.1;
             case "residential":
-                return 8.3;  // 30 km/h
+                return 8.3;
             case "service":
-                return 5.6;  // 20 km/h
+                return 5.6;
             default:
-                return 11.1; // 40 km/h 默认
+                return 11.1;
         }
     }
 
@@ -181,14 +170,10 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
         return R * c;
     }
 
-    /**
-     * 构建地铁网络（包含站点、线路边和换乘边）
-     */
     private void buildSubwayNetwork() {
         System.out.println("开始构建地铁网络...");
-        long offset = 10000000000L; // 10亿偏移
+        long offset = 10000000000L;
 
-        // 定义站点（ID, 名称, 经度, 纬度）
         List<SubwayStation> stations = Arrays.asList(
                 new SubwayStation(1 + offset, "海口站", 110.316, 20.030),
                 new SubwayStation(2 + offset, "龙华站", 110.340, 20.030),
@@ -196,14 +181,12 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
                 new SubwayStation(4 + offset, "府城站", 110.380, 20.000)
         );
 
-        // 先添加地铁节点到图
         for (SubwayStation s : stations) {
-            Node node = new Node(s.id, s.lat, s.lon);
-            graph.addNode(node);
+            graph.addNode(new Node(s.id, s.lat, s.lon));
         }
 
-        // 创建地铁线路边（速度设为 15 m/s，约 54 km/h，比开车稍慢但合理）
-        double subwaySpeed = 15.0; // 调整至合理值
+        // 地铁速度提高到30 m/s（108 km/h）
+        double subwaySpeed = 30.0;
         List<Long> lineNodeIds = Arrays.asList(
                 stations.get(0).id, stations.get(1).id, stations.get(2).id, stations.get(3).id
         );
@@ -221,20 +204,17 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
             System.out.printf("添加地铁边: %d <-> %d, 距离 %.0f m, 时间 %.1f s%n", fromId, toId, distance, time);
         }
 
-        // 创建换乘边：每个地铁站连接到附近800米内的道路节点（增大距离以增加连通可能）
-        double walkSpeed = 1.4; // 步行速度 m/s
-        double maxWalkDistance = 800; // 米
+        double walkSpeed = 1.4;
+        double maxWalkDistance = 1000; // 增加到1000米
         int transferCount = 0;
         for (SubwayStation station : stations) {
             for (Node roadNode : graph.getNodes().values()) {
-                if (roadNode.getId() > offset) continue; // 跳过地铁节点
+                if (roadNode.getId() > offset) continue;
                 double dist = haversine(station.lon, station.lat, roadNode.getLon(), roadNode.getLat());
                 if (dist <= maxWalkDistance) {
                     double walkTime = dist / walkSpeed;
-                    Edge toSubway = new Edge(roadNode.getId(), station.id, dist, walkTime, "walk", "walk", false);
-                    graph.addEdge(toSubway);
-                    Edge fromSubway = new Edge(station.id, roadNode.getId(), dist, walkTime, "walk", "walk", false);
-                    graph.addEdge(fromSubway);
+                    graph.addEdge(new Edge(roadNode.getId(), station.id, dist, walkTime, "walk", "walk", false));
+                    graph.addEdge(new Edge(station.id, roadNode.getId(), dist, walkTime, "walk", "walk", false));
                     transferCount++;
                 }
             }
@@ -244,7 +224,6 @@ public class OsmGraphBuilderImpl implements OsmGraphBuilder {
         System.out.println("总边数: " + graph.getOutgoingEdgesCount());
     }
 
-    // 辅助内部类
     private static class SubwayStation {
         long id;
         String name;
